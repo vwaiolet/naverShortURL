@@ -8,6 +8,6 @@ export class UrlController {
 
   @Post('url')
   async shortenUrl(@Body() dto: ShortenUrlDto) {
-    return this.urlService.shortenUrl(dto.url);
+    return this.urlService.shortenUrl(dto?.url);
   }
 }
