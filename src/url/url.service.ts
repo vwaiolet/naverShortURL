@@ -3,7 +3,7 @@ import {
   BadRequestException,
   HttpException,
   Injectable,
-  InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -17,28 +17,30 @@ interface NaverShortUrlApiResponse {
 
 @Injectable()
 export class UrlService {
+  private readonly logger = new Logger(UrlService.name);
   private readonly apiUrl = 'https://openapi.naver.com/v1/util/shorturl';
 
   constructor(private readonly configService: ConfigService) {}
 
   async shortenUrl(rawUrl: string) {
     const url = this.normalizeUrl(rawUrl);
-    const clientId = this.getRequiredConfig('CLIENT_ID');
-    const clientSecret = this.getRequiredConfig('CLIENT_SECRET');
+    const clientId = this.configService.getOrThrow<string>('CLIENT_ID').trim();
+    const clientSecret = this.configService
+      .getOrThrow<string>('CLIENT_SECRET')
+      .trim();
+    const timeoutMs = this.getApiTimeoutMs();
 
     try {
-      const response = await fetch(
-        this.apiUrl,
-        {
-          method: 'POST',
-          headers: {
-            'X-Naver-Client-Id': clientId,
-            'X-Naver-Client-Secret': clientSecret,
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({ url }).toString(),
+      const response = await fetch(this.apiUrl, {
+        method: 'POST',
+        headers: {
+          'X-Naver-Client-Id': clientId,
+          'X-Naver-Client-Secret': clientSecret,
+          'Content-Type': 'application/x-www-form-urlencoded',
         },
-      );
+        body: new URLSearchParams({ url }).toString(),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
 
       const payload = await this.parseApiResponse(response);
 
@@ -63,6 +65,7 @@ export class UrlService {
         throw error;
       }
 
+      this.logger.error('Failed to call Naver Short URL API.', error);
       throw new BadGatewayException('Failed to reach Naver Short URL API.');
     }
   }
@@ -88,17 +91,7 @@ export class UrlService {
       throw new BadRequestException('Only HTTP and HTTPS URLs are supported.');
     }
 
-    return trimmedUrl;
-  }
-
-  private getRequiredConfig(key: 'CLIENT_ID' | 'CLIENT_SECRET'): string {
-    const value = this.configService.get<string>(key)?.trim();
-
-    if (!value) {
-      throw new InternalServerErrorException(`${key} is not configured.`);
-    }
-
-    return value;
+    return parsedUrl.href;
   }
 
   private async parseApiResponse(
@@ -125,5 +118,11 @@ export class UrlService {
     }
 
     return message;
+  }
+
+  private getApiTimeoutMs(): number {
+    return Number(
+      this.configService.get<number | string>('NAVER_API_TIMEOUT_MS', 5000),
+    );
   }
 }
